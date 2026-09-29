@@ -13,7 +13,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
-import { getSchoolConfig } from '../services/storage';
+import { getSchoolConfig, saveSchoolConfig } from '../services/storage';
+import { fetchOnlineData } from '../services/apiSync';
 import { SchoolConfig } from '../types';
 
 interface SidebarProps {
@@ -27,6 +28,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const [schoolConfig, setSchoolConfig] = useState<SchoolConfig>(getSchoolConfig);
 
   useEffect(() => {
+    fetchOnlineData().then(data => {
+      if (data && data.schoolConfig) {
+        setSchoolConfig(data.schoolConfig);
+        saveSchoolConfig(data.schoolConfig);
+      }
+    });
+
     const handleConfigUpdate = (e: CustomEvent<SchoolConfig>) => {
       if (e.detail) {
         setSchoolConfig(e.detail);

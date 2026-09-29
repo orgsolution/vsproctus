@@ -4,8 +4,9 @@ import { useTheme } from '../context/ThemeContext';
 import { useNotification } from '../context/NotificationContext';
 import { useTranslation } from 'react-i18next';
 import { PWAInstallButton } from '../components/PWAInstallButton';
-import { COHORT_YEARS, DEFAULT_SPECIALTIES, ConfirmationEmail } from '../types';
-import { getSavedSpecialties, saveSpecialties, getSentEmails } from '../services/storage';
+import { COHORT_YEARS, DEFAULT_SPECIALTIES, ConfirmationEmail, SchoolConfig } from '../types';
+import { getSavedSpecialties, saveSpecialties, getSentEmails, getSchoolConfig, saveSchoolConfig } from '../services/storage';
+import { syncSchoolConfigOnline, syncSpecialtiesOnline } from '../services/apiSync';
 import {
   Settings as SettingsIcon,
   Sun,
@@ -31,6 +32,9 @@ import {
   ShieldCheck,
   CheckCircle2,
   FileText,
+  School,
+  Award,
+  Flame,
 } from 'lucide-react';
 import {
   parseGoogleDriveUrl,
@@ -45,7 +49,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 export const SettingsPage: React.FC = () => {
-  const { currentUser, updateProfile, logout } = useAuth();
+  const { currentUser, updateProfile, logout, isSuperAdmin } = useAuth();
   const { mode, setMode, accentColor, setAccentColor, fontSize, setFontSize } = useTheme();
   const { showToast, playChime } = useNotification();
   const { t, i18n } = useTranslation();
@@ -59,6 +63,13 @@ export const SettingsPage: React.FC = () => {
   const [avatar, setAvatar] = useState(currentUser?.avatar || '');
   const [cohort, setCohort] = useState(currentUser?.cohort || '2025');
   const [specialty, setSpecialty] = useState(currentUser?.specialty || 'Audit et Comptabilité');
+
+  // School and Sidebar Header Configuration (SuperAdmin only)
+  const [schoolConfig, setSchoolConfig] = useState<SchoolConfig>(getSchoolConfig);
+  const [schoolName, setSchoolName] = useState(schoolConfig.schoolName || 'Haute École de Finance');
+  const [headerSubtitle, setHeaderSubtitle] = useState(schoolConfig.headerSubtitle || 'Promotion Officielle');
+  const [cohortLabel, setCohortLabel] = useState(schoolConfig.cohortLabel || '2025');
+  const [badgeText, setBadgeText] = useState(schoolConfig.badgeText || 'Certifié');
 
   // Specialties Management
   const [specialties, setSpecialties] = useState<string[]>([]);
@@ -211,6 +222,25 @@ export const SettingsPage: React.FC = () => {
     showToast({ type: 'success', title: 'Profil enregistré' });
   };
 
+  const handleSaveSchoolConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    const updated: SchoolConfig = {
+      schoolName: schoolName.trim() || 'Haute École de Finance',
+      headerSubtitle: headerSubtitle.trim() || 'Promotion Officielle',
+      cohortLabel: cohortLabel.trim() || '2025',
+      badgeText: badgeText.trim() || 'Certifié',
+    };
+    setSchoolConfig(updated);
+    saveSchoolConfig(updated);
+    syncSchoolConfigOnline(updated);
+    playChime('success');
+    showToast({
+      type: 'success',
+      title: 'En-tête du Sidebar enregistré',
+      message: `Nom de l'école mis à jour : "${updated.schoolName}"`,
+    });
+  };
+
   const handleAddSpecialty = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = newSpecialtyName.trim();
@@ -222,6 +252,7 @@ export const SettingsPage: React.FC = () => {
     const updated = [...specialties, clean];
     setSpecialties(updated);
     saveSpecialties(updated);
+    syncSpecialtiesOnline(updated);
     setNewSpecialtyName('');
     playChime('click');
     showToast({ type: 'success', title: 'Filière ajoutée' });
@@ -235,6 +266,7 @@ export const SettingsPage: React.FC = () => {
     const updated = specialties.filter(s => s !== item);
     setSpecialties(updated);
     saveSpecialties(updated);
+    syncSpecialtiesOnline(updated);
     playChime('click');
     showToast({ type: 'info', title: 'Filière supprimée' });
   };
@@ -242,6 +274,7 @@ export const SettingsPage: React.FC = () => {
   const handleResetSpecialties = () => {
     setSpecialties(DEFAULT_SPECIALTIES);
     saveSpecialties(DEFAULT_SPECIALTIES);
+    syncSpecialtiesOnline(DEFAULT_SPECIALTIES);
     playChime('click');
     showToast({ type: 'info', title: 'Filières réinitialisées par défaut' });
   };
@@ -432,8 +465,145 @@ export const SettingsPage: React.FC = () => {
         </form>
       </div>
 
-      {/* 2. Gestion des filières (Customizable Specialties) */}
-      <div className="p-6 rounded-3xl bg-white dark:bg-[#131E35] border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
+      {/* Vue pour les utilisateurs standards : uniquement Mon Compte et Se Déconnecter */}
+      {!isSuperAdmin && (
+        <div className="p-6 rounded-3xl bg-white dark:bg-[#131E35] border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-bold text-slate-800 dark:text-white">
+              Déconnexion
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Fermer votre session Proctus sur cet appareil
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              logout();
+              navigate('/');
+            }}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 text-xs font-bold transition cursor-pointer border border-red-200 dark:border-red-900"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Se déconnecter de Proctus</span>
+          </button>
+        </div>
+      )}
+
+      {/* Sections d'administration réservées EXCLUSIVEMENT au SuperAdmin */}
+      {isSuperAdmin && (
+        <>
+          {/* 2. SuperAdmin Only: Configuration de l'Établissement & En-tête du Sidebar */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-[#131E35] border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-[#0A1F44] text-[#C9A227] border border-[#C9A227]/30">
+                  <School className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-base text-[#0A1F44] dark:text-white">
+                      En-tête du Sidebar & Nom de l'établissement
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-[#C9A227]/20 text-[#0A1F44] dark:text-[#C9A227] text-[10px] font-black uppercase tracking-wider">
+                      SuperAdmin
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Modifiez le nom de l'école et l'en-tête affichés en haut du menu latéral pour l'ensemble des utilisateurs
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveSchoolConfig} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Nom de l'école / Institution
+                  </label>
+                  <div className="relative">
+                    <School className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      value={schoolName}
+                      onChange={(e) => setSchoolName(e.target.value)}
+                      placeholder="ex: Haute École de Finance, Université..."
+                      className="w-full pl-10 pr-3.5 py-2.5 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-[#C9A227] focus:ring-1 focus:ring-[#C9A227]"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Ce nom apparaît dans le grand badge officiel en tête du sidebar sur tous les appareils de la promotion.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Sous-titre de l'en-tête
+                  </label>
+                  <input
+                    type="text"
+                    value={headerSubtitle}
+                    onChange={(e) => setHeaderSubtitle(e.target.value)}
+                    placeholder="ex: Promotion Officielle"
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-[#C9A227]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Badge de certification
+                  </label>
+                  <input
+                    type="text"
+                    value={badgeText}
+                    onChange={(e) => setBadgeText(e.target.value)}
+                    placeholder="ex: Certifié, Agréé..."
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:border-[#C9A227]"
+                  />
+                </div>
+              </div>
+
+              {/* Aperçu en direct */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Aperçu en direct dans le Sidebar :
+                </div>
+                <div className="max-w-xs p-3.5 rounded-2xl bg-gradient-to-br from-[#0A1F44] to-[#152e5c] text-white shadow-md border border-[#C9A227]/30">
+                  <div className="flex items-center justify-between text-xs text-[#C9A227] font-semibold mb-1">
+                    <span className="flex items-center gap-1">
+                      <Flame className="w-3.5 h-3.5 text-[#F4A261]" />
+                      {headerSubtitle || 'Promotion Officielle'}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-[#C9A227]/20 text-[#C9A227] text-[10px] font-mono">
+                      2025
+                    </span>
+                  </div>
+                  <div className="font-bold text-sm text-white">
+                    {schoolName || 'Haute École de Finance'}
+                  </div>
+                  <div className="text-[11px] text-slate-300 mt-1 flex items-center gap-1">
+                    <Award className="w-3.5 h-3.5 text-[#C9A227]" />
+                    Audit et Comptabilité • {badgeText || 'Certifié'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0A1F44] text-[#C9A227] font-bold text-xs shadow-md transition hover:bg-[#152e5c] cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Enregistrer l'en-tête du sidebar</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* 3. Gestion des filières (Customizable Specialties) */}
+          <div className="p-6 rounded-3xl bg-white dark:bg-[#131E35] border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-2">
             <Layers className="w-5 h-5 text-[#C9A227]" />
@@ -919,6 +1089,8 @@ export const SettingsPage: React.FC = () => {
           </button>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
-import { COHORT_YEARS, ConfirmationEmail, SUPERADMIN_EMAIL } from '../types';
+import { COHORT_YEARS, ConfirmationEmail, SUPERADMIN_EMAIL, isSuperAdminEmail } from '../types';
 import { getSavedSpecialties } from '../services/storage';
 import { useTranslation } from 'react-i18next';
 import {
@@ -192,7 +192,7 @@ export const AuthPage: React.FC = () => {
 
       const res = await loginWithGoogle({
         email: cleanEmail,
-        name: cleanEmail === SUPERADMIN_EMAIL.toLowerCase() ? 'Admin Proctus' : (formattedName || 'Utilisateur Google'),
+        name: isSuperAdminEmail(cleanEmail) ? 'Admin Proctus' : (formattedName || 'Utilisateur Google'),
         cohort: '2025',
         specialty: specialty || 'Audit et Comptabilité',
       });

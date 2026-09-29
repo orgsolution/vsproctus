@@ -55,7 +55,7 @@
     }
   },
   "auth": {
-    "loginTitle": "Connexion Membre",
+    "loginTitle": "Connexion",
     "loginSubtitle": "Accédez à votre espace promotionnel exclusif",
     "signupTitle": "Créer votre compte",
     "signupSubtitle": "Réservé exclusivement aux Élèves - Stagiaires de la promotion",

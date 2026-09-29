@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, UserSpecialty, SUPERADMIN_EMAIL, ConfirmationEmail } from '../types';
+import { User, UserSpecialty, SUPERADMIN_EMAIL, ConfirmationEmail, isSuperAdminEmail } from '../types';
 import { useLocalStorage, hashPassword, INITIAL_USERS, sendConfirmationEmail } from '../services/storage';
+import { fetchOnlineData, syncUserOnline, verifyOnlineLogin } from '../services/apiSync';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -42,15 +43,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const currentUser = users.find(u => u.id === currentUserId) || null;
 
-  // RBAC: SuperAdmin check strictly for acceuil.org@gmail.com
+  // RBAC: SuperAdmin check for acceuil.org@gmail.com and accueil.org@gmail.com
   const isSuperAdmin = Boolean(
-    currentUser && currentUser.email.toLowerCase().trim() === SUPERADMIN_EMAIL
+    currentUser && isSuperAdminEmail(currentUser.email)
   );
 
-  // Auto-enforce roles based strictly on email: acceuil.org@gmail.com is SuperAdmin, all others are SimpleUser
+  // Cross-device online synchronization on mount (Tablette, Téléphone, Ordinateur)
+  useEffect(() => {
+    fetchOnlineData().then(online => {
+      if (online && Array.isArray(online.users) && online.users.length > 0) {
+        setUsers(prev => {
+          const map = new Map<string, User>();
+          prev.forEach(u => map.set(u.email.toLowerCase().trim(), u));
+          online.users.forEach(u => {
+            const key = u.email.toLowerCase().trim();
+            const existing = map.get(key);
+            if (!existing) {
+              map.set(key, u);
+            } else {
+              map.set(key, { ...existing, ...u });
+            }
+          });
+          return Array.from(map.values());
+        });
+      }
+    });
+  }, [setUsers]);
+
+  // Auto-enforce roles based on isSuperAdminEmail
   useEffect(() => {
     if (!currentUser) return;
-    const isSuper = currentUser.email.toLowerCase().trim() === SUPERADMIN_EMAIL;
+    const isSuper = isSuperAdminEmail(currentUser.email);
     const targetRole: 'SuperAdmin' | 'SimpleUser' = isSuper ? 'SuperAdmin' : 'SimpleUser';
     if (currentUser.role !== targetRole) {
       const updated = users.map(u => u.id === currentUser.id ? { ...u, role: targetRole } : u);
@@ -61,11 +84,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, passwordPlain: string): Promise<boolean> => {
     const hashed = await hashPassword(passwordPlain);
     const cleanEmail = email.toLowerCase().trim();
-    const found = users.find(
+    let found = users.find(
       u => u.email.toLowerCase().trim() === cleanEmail && u.passwordHash === hashed
     );
+
+    // If account not found locally (e.g. created on tablet, connecting from phone), check online DB!
+    if (!found) {
+      const onlineUser = await verifyOnlineLogin(cleanEmail, hashed);
+      if (onlineUser) {
+        found = onlineUser;
+        setUsers(prev => {
+          const filtered = prev.filter(u => u.email.toLowerCase().trim() !== cleanEmail);
+          return [...filtered, onlineUser];
+        });
+      }
+    }
+
     if (found) {
-      if (cleanEmail === SUPERADMIN_EMAIL && found.role !== 'SuperAdmin') {
+      if (isSuperAdminEmail(cleanEmail) && found.role !== 'SuperAdmin') {
         const updated = users.map(u => u.id === found.id ? { ...u, role: 'SuperAdmin' as const } : u);
         setUsers(updated);
       }
@@ -103,7 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    const role: 'SuperAdmin' | 'SimpleUser' = cleanEmail === SUPERADMIN_EMAIL ? 'SuperAdmin' : 'SimpleUser';
+    const role: 'SuperAdmin' | 'SimpleUser' = isSuperAdminEmail(cleanEmail) ? 'SuperAdmin' : 'SimpleUser';
 
     const newUser: User = {
       id: `user-${Date.now()}`,
@@ -127,6 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
     setCurrentUserId(newUser.id);
+    syncUserOnline(newUser);
 
     // Envoi de l'e-mail de confirmation après inscription
     const sentMail = await sendConfirmationEmail({
@@ -162,7 +199,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // New registration via Google
     const dummyPasswordHash = await hashPassword(`google_oauth_${Date.now()}_secure`);
-    const role: 'SuperAdmin' | 'SimpleUser' = emailToUse === SUPERADMIN_EMAIL ? 'SuperAdmin' : 'SimpleUser';
+    const role: 'SuperAdmin' | 'SimpleUser' = isSuperAdminEmail(emailToUse) ? 'SuperAdmin' : 'SimpleUser';
     const cohort = googleData?.cohort || '2025';
     const specialty = googleData?.specialty || 'Audit et Comptabilité';
 
@@ -188,6 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = [...users, newUser];
     setUsers(updated);
     setCurrentUserId(newUser.id);
+    syncUserOnline(newUser);
 
     // Send confirmation email for Google signups too
     const sentMail = await sendConfirmationEmail({
@@ -253,8 +291,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateProfile = (updates: Partial<User>) => {
     if (!currentUser) return;
-    const updated = users.map(u => (u.id === currentUser.id ? { ...u, ...updates } : u));
+    const updatedUser = { ...currentUser, ...updates };
+    const updated = users.map(u => (u.id === currentUser.id ? updatedUser : u));
     setUsers(updated);
+    syncUserOnline(updatedUser);
   };
 
   const getUserById = (id: string) => users.find(u => u.id === id);

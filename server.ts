@@ -3,6 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -243,6 +244,118 @@ function generateFallbackFinanceQuiz(topic: string, count: number, timeLimit: nu
     explanation: item.exp,
   }));
 }
+
+// Online Persistent Database across devices (Tablette, Téléphone, Ordinateur)
+const DB_FILE = path.resolve(import.meta.dirname, 'proctus-server-db.json');
+
+interface ServerDB {
+  users: any[];
+  schoolConfig: {
+    schoolName: string;
+    headerSubtitle: string;
+    cohortLabel: string;
+    badgeText: string;
+  };
+  specialties: string[];
+}
+
+const defaultDB: ServerDB = {
+  users: [],
+  schoolConfig: {
+    schoolName: 'Haute École de Finance',
+    headerSubtitle: 'Promotion Officielle',
+    cohortLabel: '2025',
+    badgeText: 'Certifié',
+  },
+  specialties: [
+    'Finance',
+    'Audit et Comptabilité',
+    'Douane',
+    'Trésor',
+    'Comptabilité',
+    'Économie',
+    'Droit',
+    'Gestion',
+    'Agronomie',
+    'Administration',
+    'Administration Publique',
+    'Informatique'
+  ],
+};
+
+function readServerDB(): ServerDB {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const content = fs.readFileSync(DB_FILE, 'utf-8');
+      return { ...defaultDB, ...JSON.parse(content) };
+    }
+  } catch (e) {
+    console.warn('[Server DB] Error reading DB file:', e);
+  }
+  return defaultDB;
+}
+
+function writeServerDB(data: ServerDB) {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (e) {
+    console.error('[Server DB] Error saving DB file:', e);
+  }
+}
+
+// 4. Online Database Sync Endpoints (Multi-device Tablette & Téléphone)
+app.get('/api/sync', (_req, res) => {
+  const db = readServerDB();
+  return res.json(db);
+});
+
+app.post('/api/sync/user', (req, res) => {
+  const { user } = req.body;
+  if (!user || !user.email) return res.status(400).json({ error: 'User with email required' });
+  const db = readServerDB();
+  const cleanEmail = user.email.toLowerCase().trim();
+  const existingIdx = db.users.findIndex((u: any) => u.email.toLowerCase().trim() === cleanEmail);
+  if (existingIdx >= 0) {
+    db.users[existingIdx] = { ...db.users[existingIdx], ...user };
+  } else {
+    db.users.push(user);
+  }
+  writeServerDB(db);
+  return res.json({ success: true, count: db.users.length });
+});
+
+app.post('/api/sync/login', (req, res) => {
+  const { email, passwordHash } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  const db = readServerDB();
+  const cleanEmail = email.toLowerCase().trim();
+  const found = db.users.find((u: any) =>
+    u.email.toLowerCase().trim() === cleanEmail &&
+    (!passwordHash || u.passwordHash === passwordHash)
+  );
+  if (found) {
+    return res.json({ success: true, user: found });
+  }
+  return res.status(404).json({ error: 'Compte non trouvé' });
+});
+
+app.post('/api/sync/config', (req, res) => {
+  const { config } = req.body;
+  if (!config) return res.status(400).json({ error: 'Config required' });
+  const db = readServerDB();
+  db.schoolConfig = { ...db.schoolConfig, ...config };
+  writeServerDB(db);
+  return res.json({ success: true, schoolConfig: db.schoolConfig });
+});
+
+app.post('/api/sync/specialties', (req, res) => {
+  const { specialties } = req.body;
+  if (!Array.isArray(specialties)) return res.status(400).json({ error: 'Array required' });
+  const db = readServerDB();
+  db.specialties = specialties;
+  writeServerDB(db);
+  return res.json({ success: true, specialties: db.specialties });
+});
 
 // Dev and Production configuration
 async function startServer() {

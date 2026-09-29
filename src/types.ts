@@ -29,6 +29,13 @@ export const COHORT_YEARS = [
 ];
 
 export const SUPERADMIN_EMAIL = 'acceuil.org@gmail.com';
+export const SUPERADMIN_EMAILS = ['acceuil.org@gmail.com', 'accueil.org@gmail.com'];
+
+export function isSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const clean = email.toLowerCase().trim();
+  return SUPERADMIN_EMAILS.includes(clean);
+}
 
 export interface SchoolConfig {
   schoolName: string;
