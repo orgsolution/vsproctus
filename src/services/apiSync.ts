@@ -19,6 +19,35 @@ export async function fetchOnlineData(): Promise<ServerSyncData | null> {
   }
 }
 
+// Sync a batch of users to online database
+export async function syncBatchUsersOnline(users: User[]): Promise<boolean> {
+  if (!users || users.length === 0) return true;
+  try {
+    const res = await fetch('/api/sync/batch-users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ users }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[Online Sync] Failed to batch sync users online:', err);
+    return false;
+  }
+}
+
+// Fetch a single user by email from the server
+export async function fetchUserOnline(email: string): Promise<User | null> {
+  try {
+    const res = await fetch(`/api/sync/user/${encodeURIComponent(email.toLowerCase().trim())}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.user || null;
+  } catch (err) {
+    console.warn('[Online Sync] Failed to fetch user online:', err);
+    return null;
+  }
+}
+
 // Sync a user account online so they can log in from any device (tablet, phone, PC)
 export async function syncUserOnline(user: User): Promise<boolean> {
   try {

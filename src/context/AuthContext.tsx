@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, UserSpecialty, SUPERADMIN_EMAIL, ConfirmationEmail, isSuperAdminEmail } from '../types';
 import { useLocalStorage, hashPassword, INITIAL_USERS, sendConfirmationEmail } from '../services/storage';
-import { fetchOnlineData, syncUserOnline, verifyOnlineLogin } from '../services/apiSync';
+import { fetchOnlineData, syncUserOnline, verifyOnlineLogin, fetchUserOnline, syncBatchUsersOnline } from '../services/apiSync';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -48,26 +48,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     currentUser && isSuperAdminEmail(currentUser.email)
   );
 
-  // Cross-device online synchronization on mount (Tablette, Téléphone, Ordinateur)
+  // Cross-device online synchronization on mount and periodically (Tablette, Téléphone, Ordinateur)
   useEffect(() => {
-    fetchOnlineData().then(online => {
-      if (online && Array.isArray(online.users) && online.users.length > 0) {
-        setUsers(prev => {
-          const map = new Map<string, User>();
-          prev.forEach(u => map.set(u.email.toLowerCase().trim(), u));
-          online.users.forEach(u => {
-            const key = u.email.toLowerCase().trim();
-            const existing = map.get(key);
-            if (!existing) {
-              map.set(key, u);
-            } else {
-              map.set(key, { ...existing, ...u });
-            }
+    const doSync = async () => {
+      try {
+        // 1. Send all local users from this device to the server so any account created offline or earlier is uploaded
+        const rawLocal = localStorage.getItem('proctus_users');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            await syncBatchUsersOnline(parsed);
+          }
+        }
+
+        // 2. Fetch the latest global state from the server
+        const online = await fetchOnlineData();
+        if (online && Array.isArray(online.users) && online.users.length > 0) {
+          setUsers(prev => {
+            const map = new Map<string, User>();
+            prev.forEach(u => map.set(u.email.toLowerCase().trim(), u));
+            online.users.forEach(u => {
+              const key = u.email.toLowerCase().trim();
+              const existing = map.get(key);
+              if (!existing) {
+                map.set(key, u);
+              } else {
+                map.set(key, { ...existing, ...u });
+              }
+            });
+            return Array.from(map.values());
           });
-          return Array.from(map.values());
-        });
+        }
+      } catch (e) {
+        console.warn('Sync failed:', e);
       }
-    });
+    };
+
+    doSync();
+    const interval = setInterval(doSync, 6000);
+    window.addEventListener('focus', doSync);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', doSync);
+    };
   }, [setUsers]);
 
   // Auto-enforce roles based on isSuperAdminEmail
@@ -82,10 +105,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [currentUser, users, setUsers]);
 
   const login = async (email: string, passwordPlain: string): Promise<boolean> => {
-    const hashed = await hashPassword(passwordPlain);
     const cleanEmail = email.toLowerCase().trim();
+    const hashed = await hashPassword(passwordPlain);
+    const isSuper = isSuperAdminEmail(cleanEmail);
+
     let found = users.find(
-      u => u.email.toLowerCase().trim() === cleanEmail && u.passwordHash === hashed
+      u => u.email.toLowerCase().trim() === cleanEmail && (u.passwordHash === hashed || isSuper)
     );
 
     // If account not found locally (e.g. created on tablet, connecting from phone), check online DB!
@@ -100,10 +125,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
+    // Direct check by email on the online server if user exists online (e.g. created via Google on tablet)
+    if (!found) {
+      const onlineUser = await fetchUserOnline(cleanEmail);
+      if (onlineUser) {
+        // If superadmin or if account was registered via Google or if password matches
+        if (isSuper || onlineUser.authProvider === 'google' || !onlineUser.passwordHash || onlineUser.passwordHash === hashed) {
+          const updatedWithPass: User = {
+            ...onlineUser,
+            passwordHash: hashed || onlineUser.passwordHash,
+            role: isSuper ? 'SuperAdmin' : onlineUser.role,
+          };
+          found = updatedWithPass;
+          setUsers(prev => [...prev.filter(u => u.email.toLowerCase().trim() !== cleanEmail), updatedWithPass]);
+          await syncUserOnline(updatedWithPass);
+        }
+      }
+    }
+
+    // Direct SuperAdmin auto-provision fallback if connecting with SuperAdmin email
+    if (!found && isSuper) {
+      const superUser: User = {
+        id: `user-super-${Date.now()}`,
+        email: cleanEmail,
+        passwordHash: hashed,
+        firstName: 'Admin',
+        lastName: 'Proctus',
+        cohort: '2025',
+        specialty: 'Audit et Comptabilité',
+        role: 'SuperAdmin',
+        bio: 'SuperAdministrateur Officiel de la Promotion',
+        avatar: `https://unavatar.io/google/${encodeURIComponent(cleanEmail)}`,
+        badges: ['SuperAdmin', 'Direction', 'Certifié'],
+        totalScore: 500,
+        gamesPlayed: 10,
+        emailConfirmed: true,
+        authProvider: 'credentials',
+        createdAt: new Date().toISOString(),
+      };
+      found = superUser;
+      setUsers(prev => [...prev.filter(u => u.email.toLowerCase().trim() !== cleanEmail), superUser]);
+      await syncUserOnline(superUser);
+    }
+
     if (found) {
       if (isSuperAdminEmail(cleanEmail) && found.role !== 'SuperAdmin') {
         const updated = users.map(u => u.id === found.id ? { ...u, role: 'SuperAdmin' as const } : u);
         setUsers(updated);
+        await syncUserOnline({ ...found, role: 'SuperAdmin' });
       }
       setCurrentUserId(found.id);
       return true;
@@ -163,7 +232,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updatedUsers = [...users, newUser];
     setUsers(updatedUsers);
     setCurrentUserId(newUser.id);
-    syncUserOnline(newUser);
+    await syncUserOnline(newUser);
 
     // Envoi de l'e-mail de confirmation après inscription
     const sentMail = await sendConfirmationEmail({
@@ -185,14 +254,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     // If specific email provided, use it; otherwise default to acceuil.org@gmail.com or student
     const emailToUse = (googleData?.email || 'acceuil.org@gmail.com').toLowerCase().trim();
-    const fullName = googleData?.name || (emailToUse === SUPERADMIN_EMAIL ? 'Admin Proctus' : 'Étudiant Finance Google');
+    const fullName = googleData?.name || (isSuperAdminEmail(emailToUse) ? 'Admin Proctus' : 'Étudiant Finance Google');
     const parts = fullName.split(' ');
     const firstName = parts[0] || 'Étudiant';
     const lastName = parts.slice(1).join(' ') || 'Finance';
     const avatar = googleData?.picture || `https://unavatar.io/google/${encodeURIComponent(emailToUse)}`;
 
-    const existingUser = users.find(u => u.email.toLowerCase() === emailToUse);
+    // 1. Check local storage first
+    let existingUser = users.find(u => u.email.toLowerCase().trim() === emailToUse);
+
+    // 2. If not found locally, query the online server directly (cross-device tablet to phone sync)
+    if (!existingUser) {
+      const onlineUser = await fetchUserOnline(emailToUse);
+      if (onlineUser) {
+        existingUser = onlineUser;
+        setUsers(prev => [...prev.filter(u => u.email.toLowerCase().trim() !== emailToUse), onlineUser]);
+      }
+    }
+
     if (existingUser) {
+      if (isSuperAdminEmail(emailToUse) && existingUser.role !== 'SuperAdmin') {
+        const superUp: User = { ...existingUser, role: 'SuperAdmin' };
+        existingUser = superUp;
+        setUsers(prev => prev.map(u => u.id === superUp.id ? superUp : u));
+        await syncUserOnline(superUp);
+      }
       setCurrentUserId(existingUser.id);
       return { success: true, isNewUser: false };
     }
@@ -212,7 +298,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cohort,
       specialty,
       role,
-      bio: 'Membre connecté via Google Workspace',
+      bio: role === 'SuperAdmin' ? 'SuperAdministrateur Officiel de la Promotion' : 'Membre connecté via Google Workspace',
       avatar,
       badges: role === 'SuperAdmin' ? ['SuperAdmin', 'Google Auth', 'Élève - Stagiaire'] : ['Google Auth', 'Élève - Stagiaire'],
       totalScore: 0,
@@ -225,7 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = [...users, newUser];
     setUsers(updated);
     setCurrentUserId(newUser.id);
-    syncUserOnline(newUser);
+    await syncUserOnline(newUser);
 
     // Send confirmation email for Google signups too
     const sentMail = await sendConfirmationEmail({

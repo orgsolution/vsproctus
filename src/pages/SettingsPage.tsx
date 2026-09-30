@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { COHORT_YEARS, DEFAULT_SPECIALTIES, ConfirmationEmail, SchoolConfig } from '../types';
 import { getSavedSpecialties, saveSpecialties, getSentEmails, getSchoolConfig, saveSchoolConfig } from '../services/storage';
-import { syncSchoolConfigOnline, syncSpecialtiesOnline } from '../services/apiSync';
+import { syncSchoolConfigOnline, syncSpecialtiesOnline, fetchOnlineData } from '../services/apiSync';
 import {
   Settings as SettingsIcon,
   Sun,
@@ -87,6 +87,24 @@ export const SettingsPage: React.FC = () => {
     setSpecialties(getSavedSpecialties());
     setSentEmails(getSentEmails());
     setDriveFiles(getSavedDrivePublications());
+
+    // Sync online database school configuration and specialties
+    fetchOnlineData().then(online => {
+      if (online) {
+        if (online.schoolConfig) {
+          setSchoolConfig(online.schoolConfig);
+          setSchoolName(online.schoolConfig.schoolName || 'Haute École de Finance');
+          setHeaderSubtitle(online.schoolConfig.headerSubtitle || 'Promotion Officielle');
+          setCohortLabel(online.schoolConfig.cohortLabel || '2025');
+          setBadgeText(online.schoolConfig.badgeText || 'Certifié');
+          saveSchoolConfig(online.schoolConfig);
+        }
+        if (online.specialties && Array.isArray(online.specialties) && online.specialties.length > 0) {
+          setSpecialties(online.specialties);
+          saveSpecialties(online.specialties);
+        }
+      }
+    });
 
     const handleEmailUpdate = () => setSentEmails(getSentEmails());
     window.addEventListener('proctus-email-sent', handleEmailUpdate);
