@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered student, delegate or administrator user profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique user ID" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "firstName": { "type": "string", "description": "First name" },
+        "lastName": { "type": "string", "description": "Last name" },
+        "cohort": { "type": "string", "description": "Graduation cohort year" },
+        "specialty": { "type": "string", "description": "Academic specialty/filiere" },
+        "role": { "type": "string", "enum": ["SuperAdmin", "SimpleUser"], "description": "User role" },
+        "bio": { "type": "string", "description": "Bio description" },
+        "avatar": { "type": "string", "description": "Avatar URL or base64" },
+        "passwordHash": { "type": "string", "description": "Hashed password" },
+        "badges": { "type": "array", "description": "User badges" },
+        "totalScore": { "type": "number", "description": "Quiz points score" },
+        "gamesPlayed": { "type": "number", "description": "Number of quizzes played" },
+        "emailConfirmed": { "type": "boolean", "description": "Whether email is confirmed" },
+        "authProvider": { "type": "string", "enum": ["credentials", "google"], "description": "Authentication method" },
+        "createdAt": { "type": "string", "description": "Timestamp string of registration" }
+      },
+      "required": ["id", "email", "firstName", "lastName", "cohort", "specialty", "role"]
+    },
+    "SchoolConfig": {
+      "title": "SchoolConfig",
+      "description": "School header and promotion metadata",
+      "type": "object",
+      "properties": {
+        "schoolName": { "type": "string", "description": "School title displayed in sidebar" },
+        "headerSubtitle": { "type": "string", "description": "Sidebar header subtitle" },
+        "cohortLabel": { "type": "string", "description": "Default promotion cohort label" },
+        "badgeText": { "type": "string", "description": "School badge certification text" }
+      },
+      "required": ["schoolName", "headerSubtitle", "cohortLabel", "badgeText"]
+    },
+    "SpecialtiesConfig": {
+      "title": "SpecialtiesConfig",
+      "description": "School academic specialties list",
+      "type": "object",
+      "properties": {
+        "items": { "type": "array", "description": "List of available specialties" }
+      },
+      "required": ["items"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profile documents keyed by userId or email slug"
+    },
+    "/config/school": {
+      "schema": { "$ref": "#/entities/SchoolConfig" },
+      "description": "Global school configuration document"
+    },
+    "/config/specialties": {
+      "schema": { "$ref": "#/entities/SpecialtiesConfig" },
+      "description": "Global specialties configuration document"
+    }
+  }
+}

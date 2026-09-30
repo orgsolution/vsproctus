@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.\\@]+$');
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Test connection document
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Users collection for cross-device authentication and directory
+    match /users/{userId} {
+      allow read: if isValidId(userId);
+      allow create, update: if isValidId(userId);
+      allow delete: if false;
+    }
+
+    // School and specialties configuration
+    match /config/{configDoc} {
+      allow read: if isValidId(configDoc);
+      allow write: if isValidId(configDoc);
+    }
+  }
+}
